@@ -17,15 +17,15 @@ if os.path.exists(env_path):
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# Paths (change if you move the script)
-BASE_DIR = r"C:\security\script"
-PHOTOS_DIR = r"C:\security\script\photos"
-LOG_FILE = r"C:\security\script\photo_log.txt"
+# Paths (dynamically determined)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PHOTOS_DIR = os.path.join(BASE_DIR, "photos")
+LOG_FILE = os.path.join(BASE_DIR, "photo_log.txt")
 
 # AI Model Paths
-FACE_DETECTION_MODEL = r"C:\security\script\face_detection_yunet_2023mar.onnx"
-FACE_RECOGNITION_MODEL = r"C:\security\script\face_recognition_sface_2021dec.onnx"
-OWNER_EMBEDDING_FILE = r"C:\security\script\owner_embedding_sface.npy"
+FACE_DETECTION_MODEL = os.path.join(BASE_DIR, "face_detection_yunet_2023mar.onnx")
+FACE_RECOGNITION_MODEL = os.path.join(BASE_DIR, "face_recognition_sface_2021dec.onnx")
+OWNER_EMBEDDING_FILE = os.path.join(BASE_DIR, "owner_embedding_sface.npy")
 
 # Detection Settings
 RECOGNITION_THRESHOLD = 0.30  # Cosine similarity threshold (LOWERED to reduce false positives)
