@@ -12,41 +12,54 @@ A smart security camera that captures photos on Windows login with face detectio
 
 ## Prerequisites
 
-Install required Python packages:
+Ensure you have Python installed. Then, install the required packages:
 ```powershell
-pip install opencv-python numpy psutil requests
+pip install opencv-python numpy psutil requests python-dotenv
 ```
 
-## Setup
+## Setup & Configuration
 
-### Task Scheduler (Recommended)
+### 1. Protect Your Secrets
+Create a `.env` file in the script directory and add your Telegram credentials:
+```env
+TELEGRAM_BOT_TOKEN=your_bot_token_here
+TELEGRAM_CHAT_ID=your_chat_id_here
+```
+*(This file is ignored by Git to protect your secrets).*
 
-1. Open "Task Scheduler" from Start menu
-2. Click "Import Task" and select `task_config.xml`
-3. Or manually create a task triggered "When I log on" that runs:
-   ```
-   pythonw.exe "C:\path\to\script\capture_photo.py"
-   ```
+### 2. Configure Settings
+Edit `config.py` to customize:
+- Detection thresholds
+- Battery settings
+- Photo retention period
 
-### Register Your Face
-
+### 3. Register Your Face
 Run this once to register yourself as the owner:
 ```powershell
 python register_owner.py
 ```
+*(Look into the camera until it confirms your face is registered).*
 
-## Configuration
+## How to Use
 
-1. Create a `.env` file in the script directory and add your Telegram credentials:
-   ```env
-   TELEGRAM_BOT_TOKEN=your_bot_token_here
-   TELEGRAM_CHAT_ID=your_chat_id_here
-   ```
+**Option A: Manual Run (For testing)**
+Simply run the main script whenever you want to start monitoring:
+```powershell
+python capture_photo.py
+```
 
-2. Edit `config.py` to customize:
-   - Detection thresholds
-   - Battery settings
-   - Photo retention period
+**Option B: Background Automation (Recommended)**
+To have the script run completely invisibly every time you log into your Windows PC:
+1. Open **Task Scheduler** from the Windows Start menu.
+2. Click **Import Task** and select `task_config.xml`.
+   *(Note: If you moved your folder, you will need to edit `task_config.xml` first to ensure the `<Command>` and `<Arguments>` paths match exactly where your script lives).*
+3. The system will now automatically run silently in the background every time you unlock your PC!
+
+## Where are the photos?
+
+Photos are saved in the `photos` folder within the script directory.
+
+Open `photos/view_photos.html` in a browser to view the offline security dashboard.
 
 ## Files
 
@@ -56,9 +69,3 @@ python register_owner.py
 | `config.py` | All configuration settings |
 | `register_owner.py` | Register your face as owner |
 | `photos/view_photos.html` | Security dashboard |
-
-## Where are the photos?
-
-Photos are saved in the `photos` folder within the script directory.
-
-Open `photos/view_photos.html` in a browser to view the dashboard.
