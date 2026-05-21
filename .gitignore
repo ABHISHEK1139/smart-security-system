@@ -1,0 +1,13 @@
+# Environments
+.venv/
+__pycache__/
+
+# Secrets
+.env
+
+# User Data and Logs
+photos/
+activity_logs/
+photo_log.txt
+*.npy
+owner_ref_sface.jpg
