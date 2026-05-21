@@ -25,14 +25,14 @@ pip install opencv-python numpy psutil requests
 2. Click "Import Task" and select `task_config.xml`
 3. Or manually create a task triggered "When I log on" that runs:
    ```
-   pythonw.exe C:\script\capture_photo.py
+   pythonw.exe "C:\path\to\script\capture_photo.py"
    ```
 
 ### Register Your Face
 
 Run this once to register yourself as the owner:
 ```powershell
-python C:\script\register_owner.py
+python register_owner.py
 ```
 
 ## Configuration
@@ -59,6 +59,6 @@ python C:\script\register_owner.py
 
 ## Where are the photos?
 
-Photos are saved in: `C:\script\photos`
+Photos are saved in the `photos` folder within the script directory.
 
-Open `C:\script\photos\view_photos.html` in a browser to view the dashboard.
+Open `photos/view_photos.html` in a browser to view the dashboard.
