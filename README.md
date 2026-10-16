@@ -14,7 +14,7 @@ A smart security camera that captures photos on Windows login with face detectio
 
 Ensure you have Python installed. Then, install the required packages:
 ```powershell
-pip install opencv-python numpy psutil requests python-dotenv
+pip install -r requirements.txt
 ```
 
 ## Setup & Configuration

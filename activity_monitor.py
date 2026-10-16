@@ -31,7 +31,7 @@ try:
     NOTIFY_TITLE = ACTIVITY_NOTIFY_TITLE
     NOTIFY_MESSAGE = ACTIVITY_NOTIFY_MESSAGE
 except ImportError:
-    BASE_DIR = r"C:\security\script"
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     MONITOR_DURATION = 1800  # 30 minutes default monitoring duration
     LOG_INTERVAL = 2  # Check every 2 seconds
     NOTIFICATION_DELAY = 180  # 3 minutes
@@ -45,9 +45,23 @@ STOP_SIGNAL_FILE = os.path.join(BASE_DIR, ".stop_monitor")
 # Ensure log directory exists
 os.makedirs(ACTIVITY_LOG_DIR, exist_ok=True)
 
+def _escape_powershell(text):
+    """Escape text for safe interpolation into a PowerShell double-quoted string.
+
+    A quote or $ in the config-controlled title/message would otherwise break
+    out of the string and inject commands into the owner's own shell.
+    """
+    return (str(text)
+            .replace("`", "``")   # escape the escape character first
+            .replace("$", "`$")   # no variable expansion
+            .replace('"', '`"'))  # no string breakout
+
 def show_game_notification(title="Minecraft", message="World saved"):
     """Show a simple Windows balloon notification"""
     try:
+        title = _escape_powershell(title)
+        message = _escape_powershell(message)
+
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startupinfo.wShowWindow = 0
