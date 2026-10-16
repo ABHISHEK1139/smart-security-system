@@ -28,7 +28,7 @@ FACE_RECOGNITION_MODEL = os.path.join(BASE_DIR, "face_recognition_sface_2021dec.
 OWNER_EMBEDDING_FILE = os.path.join(BASE_DIR, "owner_embedding_sface.npy")
 
 # Detection Settings
-RECOGNITION_THRESHOLD = 0.30  # Cosine similarity threshold (LOWERED to reduce false positives)
+RECOGNITION_THRESHOLD = 0.50  # Cosine similarity threshold (HIGHER = stricter: 1.0 = identical). Validate against genuine/impostor samples; lowering this increases false accepts.
 DETECTION_CONFIDENCE = 0.7    # YuNet face detection confidence (LOWERED for better detection)
 MAX_CAPTURE_DURATION = 300    # Max seconds to run capture loop (5 minutes)
 RETRY_DELAY = 20              # Seconds to wait before retry if no face found

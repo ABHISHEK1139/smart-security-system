@@ -1,0 +1,6 @@
+# Runtime dependencies for the smart security system.
+# Install with: pip install -r requirements.txt
+opencv-python
+numpy
+psutil
+requests

@@ -40,9 +40,11 @@
     <Priority>4</Priority>
   </Settings>
   <Actions Context="Author">
+    <!-- NOTE: On import, set <WorkingDirectory> to the folder containing
+         capture_photo.py on YOUR machine (pythonw.exe is resolved from PATH). -->
     <Exec>
-      <Command>C:\Users\ak612\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\pythonw.exe</Command>
-      <Arguments>C:\security\script\capture_photo.py</Arguments>
+      <Command>pythonw.exe</Command>
+      <Arguments>capture_photo.py</Arguments>
       <WorkingDirectory>C:\security\script</WorkingDirectory>
     </Exec>
   </Actions>

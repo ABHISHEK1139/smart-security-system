@@ -8,7 +8,6 @@ import urllib.request
 import subprocess
 import re
 import ctypes
-import winsound # For alarm
 import requests # For Telegram
 import numpy as np
 
@@ -35,24 +34,28 @@ try:
         LOW_BATTERY_SKIP_CAPTURE, DETECTION_RESOLUTION,
         # Advanced recognition settings
         MULTI_SAMPLE_VERIFICATION, VERIFICATION_SAMPLES, MIN_CONFIDENCE_VOTES,
-        FACE_QUALITY_THRESHOLD
+        FACE_QUALITY_THRESHOLD,
+        # Activity monitor settings
+        ACTIVITY_MONITOR_ENABLED
     )
 except ImportError:
-    # Fallback defaults if config.py is missing
+    # Fallback defaults if config.py is missing (derived from this file's location)
     TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN"
     TELEGRAM_CHAT_ID = "YOUR_CHAT_ID"
-    BASE_DIR = r"C:\security\script"
-    PHOTOS_DIR = r"C:\security\script\photos"
-    LOG_FILE = r"C:\security\script\photo_log.txt"
-    FACE_DETECTION_MODEL = r"C:\security\script\face_detection_yunet_2023mar.onnx"
-    FACE_RECOGNITION_MODEL = r"C:\security\script\face_recognition_sface_2021dec.onnx"
-    OWNER_EMBEDDING_FILE = r"C:\security\script\owner_embedding_sface.npy"
-    RECOGNITION_THRESHOLD = 0.35
+    _FALLBACK_DIR = os.path.dirname(os.path.abspath(__file__))
+    BASE_DIR = _FALLBACK_DIR
+    PHOTOS_DIR = os.path.join(_FALLBACK_DIR, "photos")
+    LOG_FILE = os.path.join(_FALLBACK_DIR, "photo_log.txt")
+    FACE_DETECTION_MODEL = os.path.join(_FALLBACK_DIR, "face_detection_yunet_2023mar.onnx")
+    FACE_RECOGNITION_MODEL = os.path.join(_FALLBACK_DIR, "face_recognition_sface_2021dec.onnx")
+    OWNER_EMBEDDING_FILE = os.path.join(_FALLBACK_DIR, "owner_embedding_sface.npy")
+    RECOGNITION_THRESHOLD = 0.50
     DETECTION_CONFIDENCE = 0.8
     MAX_CAPTURE_DURATION = 300
     RETRY_DELAY = 20
     PHOTO_RETENTION_DAYS = 30
     MAX_LOG_LINES = 1000
+    ACTIVITY_MONITOR_ENABLED = True
     # Battery defaults
     BATTERY_SAVER_ENABLED = True
     BATTERY_LOW_THRESHOLD = 30
@@ -144,6 +147,12 @@ import json as json_module  # For alert queue
 
 # Offline alert queue file
 ALERT_QUEUE_FILE = os.path.join(BASE_DIR, "pending_alerts.json")
+
+# Maximum queued alerts to retain (oldest are dropped first when exceeded)
+MAX_QUEUED_ALERTS = 50
+# Base delay (seconds) before retrying a failed alert; doubles per attempt, capped at 1h
+ALERT_RETRY_BASE_DELAY = 60
+ALERT_RETRY_MAX_DELAY = 3600
 
 # Startup delay to wait for session to be ready (seconds)
 STARTUP_DELAY = 3
@@ -279,40 +288,58 @@ def wait_for_session_ready(timeout=30, log_func=None):
 
 
 def queue_alert(status, photo_path, message):
-    """Save alert to queue file for later sending when internet is available"""
+    """Save alert to queue file for later sending when internet is available.
+
+    The queue is capped at MAX_QUEUED_ALERTS (newest kept) so it cannot grow
+    without bound when Telegram is unreachable for a long time.
+    """
     try:
         queue = []
         if os.path.exists(ALERT_QUEUE_FILE):
             with open(ALERT_QUEUE_FILE, 'r') as f:
                 queue = json_module.load(f)
-        
+
         queue.append({
             "status": status,
             "photo_path": photo_path,
             "message": message,
-            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "retries": 0,
+            "next_retry": 0  # epoch seconds; 0 = due immediately
         })
-        
+
+        # Cap the queue: keep only the newest alerts
+        queue = queue[-MAX_QUEUED_ALERTS:]
+
         with open(ALERT_QUEUE_FILE, 'w') as f:
             json_module.dump(queue, f)
     except Exception:
         pass
 
 def send_queued_alerts():
-    """Try to send any queued alerts (call this when internet might be available)"""
+    """Try to send any queued alerts (call this when internet might be available).
+
+    Alerts that failed recently are skipped until their exponential backoff
+    delay has elapsed, so an unreachable Telegram API doesn't cause a retry
+    storm on every run.
+    """
     if not os.path.exists(ALERT_QUEUE_FILE):
         return
-    
+
     try:
         with open(ALERT_QUEUE_FILE, 'r') as f:
             queue = json_module.load(f)
-        
+
         if not queue:
             return
-        
+
+        now = time.time()
         # Try to send each queued alert
         remaining = []
         for alert in queue:
+            if alert.get("next_retry", 0) > now:
+                remaining.append(alert)  # Backoff not elapsed yet
+                continue
             try:
                 url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
                 if alert['photo_path'] and os.path.exists(alert['photo_path']):
@@ -321,25 +348,30 @@ def send_queued_alerts():
                         data = {"chat_id": TELEGRAM_CHAT_ID, "caption": f"[DELAYED] {alert['message']}"}
                         response = requests.post(url, data=data, files=files, timeout=10)
                         if response.status_code != 200:
-                            remaining.append(alert)
+                            raise Exception("Telegram failed")
                 else:
                     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
                     data = {"chat_id": TELEGRAM_CHAT_ID, "text": f"[DELAYED] {alert['message']}"}
                     response = requests.post(url, data=data, timeout=10)
                     if response.status_code != 200:
-                        remaining.append(alert)
+                        raise Exception("Telegram failed")
             except Exception:
-                remaining.append(alert)  # Keep in queue if failed
-        
+                # Keep in queue with exponential backoff
+                retries = alert.get("retries", 0) + 1
+                delay = min(ALERT_RETRY_BASE_DELAY * (2 ** (retries - 1)), ALERT_RETRY_MAX_DELAY)
+                alert["retries"] = retries
+                alert["next_retry"] = now + delay
+                remaining.append(alert)
+
         # Update queue with remaining alerts
         with open(ALERT_QUEUE_FILE, 'w') as f:
             json_module.dump(remaining, f)
-            
+
     except Exception:
         pass
 
 def send_telegram_alert(status, session_dir):
-    if "YOUR_BOT_TOKEN" in TELEGRAM_BOT_TOKEN:
+    if not TELEGRAM_BOT_TOKEN or "YOUR_BOT_TOKEN" in TELEGRAM_BOT_TOKEN:
         return # Not configured
 
     # Build message
@@ -503,9 +535,17 @@ def generate_daily_report(base_dir):
     # 3. Generate Single Page Application (SPA) HTML
     html_path = os.path.join(base_dir, "view_photos.html")
     
-    # Serialize data to JSON for embedding
-    json_data = json.dumps(all_data)
-    activity_logs_json = json.dumps(activity_logs)
+    # Serialize data to JSON for embedding. Escape <, >, & as unicode so a
+    # window title / log string containing "</script>" cannot break out of
+    # the <script> block (self-XSS on the local dashboard).
+    def _safe_json(data):
+        return (json.dumps(data)
+                .replace("<", "\\u003c")
+                .replace(">", "\\u003e")
+                .replace("&", "\\u0026"))
+
+    json_data = _safe_json(all_data)
+    activity_logs_json = _safe_json(activity_logs)
     
     # Get current date (default to latest available)
     latest_date = sorted_dates[-1]
@@ -1022,6 +1062,42 @@ def generate_daily_report(base_dir):
         print(f"Error writing HTML: {e}")
 
 def capture_photo():
+    """Top-level entry point with fail-safe exception handling.
+
+    A security monitor must never die silently on a single bad frame: any
+    unexpected error is logged, left-over *_Scanning folders are renamed to
+    *_ERROR, and a "system error" Telegram alert is attempted before exiting.
+    """
+    try:
+        _capture_photo_impl()
+    except Exception as e:
+        # 1. Log the fatal error (best effort; never crash on logging)
+        try:
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] FATAL ERROR: {e}\n")
+        except (IOError, OSError):
+            pass
+        # 2. Rename any abandoned *_Scanning session folder so it is not
+        #    mistaken for a completed scan and gets retried next run
+        try:
+            if os.path.exists(PHOTOS_DIR):
+                for d in os.listdir(PHOTOS_DIR):
+                    if d.endswith("_Scanning"):
+                        src = os.path.join(PHOTOS_DIR, d)
+                        dst = os.path.join(PHOTOS_DIR, d[:-len("_Scanning")] + "_ERROR")
+                        try:
+                            os.rename(src, dst)
+                        except OSError:
+                            pass
+        except OSError:
+            pass
+        # 3. Attempt a "system error" alert (no-op when Telegram is unconfigured)
+        try:
+            send_telegram_alert("SYSTEM_ERROR", PHOTOS_DIR)
+        except Exception:
+            pass
+
+def _capture_photo_impl():
     # Setup logging with rotation
     def log(message):
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1039,9 +1115,12 @@ def capture_photo():
                         f.writelines(lines)
         except (IOError, OSError):
             pass
-        
-        with open(LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(log_entry)
+
+        try:
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(log_entry)
+        except (IOError, OSError):
+            pass  # Log directory not writable; never crash on logging
 
     log("Script started")
     
@@ -1088,11 +1167,20 @@ def capture_photo():
     except Exception as e:
         log(f"Cleanup error: {e}")
 
-    # Create a specific folder for THIS login session
+    # Create a specific folder for THIS login session. Two triggers firing
+    # within the same second (LogonTrigger + SessionUnlock) can collide on
+    # the name, so fall back to a unique suffix instead of raising.
     today_str = datetime.datetime.now().strftime("%Y-%m-%d")
     session_time = datetime.datetime.now().strftime("%H-%M-%S")
     session_dir = os.path.join(base_dir, f"{today_str}_{session_time}_Scanning")
-    os.makedirs(session_dir)
+    try:
+        os.makedirs(session_dir)
+    except FileExistsError:
+        session_dir = os.path.join(
+            base_dir,
+            f"{today_str}_{session_time}_Scanning_{os.getpid()}"
+        )
+        os.makedirs(session_dir, exist_ok=True)
 
     # Load Modern AI Models (YuNet + SFace)
     # 1. YuNet (Detection)
@@ -1289,76 +1377,78 @@ def capture_photo():
             log("Failed to open camera")
             break
 
-        # BURST MODE: Take photos based on power mode
-        attempt_number += 1
-        log(f"Attempt {attempt_number}: Taking {burst_count} burst photos ({power_status['power_mode']} mode)...")
+        try:
+            # BURST MODE: Take photos based on power mode
+            attempt_number += 1
+            log(f"Attempt {attempt_number}: Taking {burst_count} burst photos ({power_status['power_mode']} mode)...")
         
-        current_burst_faces_found = False
+            current_burst_faces_found = False
         
-        for i in range(burst_count):
-            # Robust Frame Capture with Brightness Check
-            ret = False
-            frame = None
+            for i in range(burst_count):
+                # Robust Frame Capture with Brightness Check
+                ret = False
+                frame = None
             
-            # Try to get a VALID (non-black) frame
-            # We poll for up to 5 seconds.
-            for attempt in range(100):
-                ret, frame = cap.read()
-                if ret:
-                    # Check brightness (0-255)
-                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                    avg_brightness = np.mean(gray)
+                # Try to get a VALID (non-black) frame
+                # We poll for up to 5 seconds.
+                for attempt in range(100):
+                    ret, frame = cap.read()
+                    if ret:
+                        # Check brightness (0-255)
+                        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                        avg_brightness = np.mean(gray)
                     
-                    # If brightness is too low, skip and wait for auto-exposure
-                    if avg_brightness > 30:
-                        break
+                        # If brightness is too low, skip and wait for auto-exposure
+                        if avg_brightness > 30:
+                            break
                 
-                time.sleep(0.05)
+                    time.sleep(0.05)
             
-            if not ret or frame is None:
-                log(f"Failed to capture valid frame {i+1} (Timed out or too dark)")
-                continue
+                if not ret or frame is None:
+                    log(f"Failed to capture valid frame {i+1} (Timed out or too dark)")
+                    continue
             
-            # OPTIMIZATION: Resize frame for faster detection
-            # Detection runs at small resolution, recognition uses full frame
-            h, w, _ = frame.shape
-            det_w, det_h = DETECTION_RESOLUTION
+                # OPTIMIZATION: Resize frame for faster detection
+                # Detection runs at small resolution, recognition uses full frame
+                h, w, _ = frame.shape
+                det_w, det_h = DETECTION_RESOLUTION
             
-            # Create smaller frame for detection (faster)
-            if w > det_w or h > det_h:
-                scale = min(det_w / w, det_h / h)
-                small_frame = cv2.resize(frame, (int(w * scale), int(h * scale)))
-                small_h, small_w = small_frame.shape[:2]
-            else:
-                small_frame = frame
-                small_h, small_w = h, w
-                scale = 1.0
+                # Create smaller frame for detection (faster)
+                if w > det_w or h > det_h:
+                    scale = min(det_w / w, det_h / h)
+                    small_frame = cv2.resize(frame, (int(w * scale), int(h * scale)))
+                    small_h, small_w = small_frame.shape[:2]
+                else:
+                    small_frame = frame
+                    small_h, small_w = h, w
+                    scale = 1.0
             
-            # Update detector input size to small frame
-            detector.setInputSize((small_w, small_h))
+                # Update detector input size to small frame
+                detector.setInputSize((small_w, small_h))
 
-            # Detect Faces on SMALL frame (YuNet) - FAST
-            _, faces_small = detector.detect(small_frame)
+                # Detect Faces on SMALL frame (YuNet) - FAST
+                _, faces_small = detector.detect(small_frame)
             
-            # Scale face coordinates back to original frame size
-            faces = None
-            if faces_small is not None and scale != 1.0:
-                faces = faces_small.copy()
-                # Scale all coordinate values (x, y, w, h, landmarks)
-                faces[:, :14] = faces[:, :14] / scale
-            elif faces_small is not None:
-                faces = faces_small
+                # Scale face coordinates back to original frame size
+                faces = None
+                if faces_small is not None and scale != 1.0:
+                    faces = faces_small.copy()
+                    # Scale all coordinate values (x, y, w, h, landmarks)
+                    faces[:, :14] = faces[:, :14] / scale
+                elif faces_small is not None:
+                    faces = faces_small
             
-            if faces is not None:
-                current_burst_faces_found = True
+                if faces is not None:
+                    current_burst_faces_found = True
             
-            # Save and Process (uses FULL frame for quality)
-            process_and_save(frame, faces)
+                # Save and Process (uses FULL frame for quality)
+                process_and_save(frame, faces)
             
-            # Very small delay between shots (0.2s) to be faster
-            time.sleep(0.2)
+                # Very small delay between shots (0.2s) to be faster
+                time.sleep(0.2)
             
-        cap.release()
+        finally:
+            cap.release()
         
         # Update Dashboard immediately so user can see photos
         try:
@@ -1416,7 +1506,7 @@ def capture_photo():
         send_telegram_alert(final_status, session_dir)
         
         # START ACTIVITY MONITOR: Track all app usage after authentication failure
-        if ACTIVITY_MONITOR_AVAILABLE:
+        if ACTIVITY_MONITOR_AVAILABLE and ACTIVITY_MONITOR_ENABLED:
             log("🔍 Starting Activity Monitor (authentication failed)...")
             try:
                 # Monitor for 30 minutes (1800 seconds) in background

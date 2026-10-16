@@ -3,6 +3,22 @@ import numpy as np
 import os
 import time
 
+# All paths come from config.py so registration writes the embedding where
+# capture_photo.py looks for it, wherever the repo lives.
+try:
+    from config import (
+        FACE_DETECTION_MODEL, FACE_RECOGNITION_MODEL,
+        OWNER_EMBEDDING_FILE, BASE_DIR
+    )
+except ImportError:
+    _FALLBACK_DIR = os.path.dirname(os.path.abspath(__file__))
+    FACE_DETECTION_MODEL = os.path.join(_FALLBACK_DIR, "face_detection_yunet_2023mar.onnx")
+    FACE_RECOGNITION_MODEL = os.path.join(_FALLBACK_DIR, "face_recognition_sface_2021dec.onnx")
+    OWNER_EMBEDDING_FILE = os.path.join(_FALLBACK_DIR, "owner_embedding_sface.npy")
+    BASE_DIR = _FALLBACK_DIR
+
+OWNER_REFERENCE_IMAGE = os.path.join(BASE_DIR, "owner_ref_sface.jpg")
+
 def register():
     print("=" * 60)
     print("OWNER FACE REGISTRATION (Multi-Sample)")
@@ -14,7 +30,7 @@ def register():
     
     # 1. Load YuNet (Detection)
     detector = cv2.FaceDetectorYN.create(
-        r"C:\security\script\face_detection_yunet_2023mar.onnx",
+        FACE_DETECTION_MODEL,
         "",
         (320, 320),
         0.8,  # Score threshold (slightly lower for better detection)
@@ -24,7 +40,7 @@ def register():
 
     # 2. Load SFace (Recognition)
     recognizer = cv2.FaceRecognizerSF.create(
-        r"C:\security\script\face_recognition_sface_2021dec.onnx",
+        FACE_RECOGNITION_MODEL,
         ""
     )
 
@@ -112,14 +128,14 @@ def register():
     avg_embedding = avg_embedding / np.linalg.norm(avg_embedding)
     
     # Save
-    np.save(r"C:\security\script\owner_embedding_sface.npy", avg_embedding)
+    np.save(OWNER_EMBEDDING_FILE, avg_embedding)
     print(f"\n[SUCCESS] Owner face registered with {len(embeddings)} samples.")
-    print(r"   Embedding saved to C:\security\script\owner_embedding_sface.npy")
-    
+    print(f"   Embedding saved to {OWNER_EMBEDDING_FILE}")
+
     # Save best reference image
     if reference_frames:
-        cv2.imwrite(r"C:\security\script\owner_ref_sface.jpg", reference_frames[0])
-        print(r"   Reference saved to C:\security\script\owner_ref_sface.jpg")
+        cv2.imwrite(OWNER_REFERENCE_IMAGE, reference_frames[0])
+        print(f"   Reference saved to {OWNER_REFERENCE_IMAGE}")
     
     print("\n" + "=" * 60)
     print("TIPS TO IMPROVE RECOGNITION:")
